@@ -1,0 +1,131 @@
+#!/bin/bash
+#===============================================================================
+# IDENTIFICATION DIVISION
+#        ID SVN:   $Id$
+#          FILE:  ansible-ssh <host-name>
+#         USAGE:  $0 
+#   DESCRIPTION:  Access a host using HOSTS file credentials on ssh
+#       OPTIONS:  -i <hosts file> -h <host-name> 
+#				  -l [Lists the available hosts on host file]
+#  REQUIREMENTS:  ansible (pip install ansible)
+#				  jq (apt install jq)
+#				  ssh  (apt install ssh)
+#          BUGS:  --- 
+#         NOTES:  Inspired on ansible-ssh from Selivanov Pavel (https://github.com/selivan)
+#          TODO:  --- 
+#        AUTHOR:  Ricardo Barbosa (ricardo.barbosa@la.logicalis.com)
+#       COMPANY:  Logicalis 
+#       VERSION:  1.0 
+#       CREATED:  2019-Jul-16 18:36 PM BRT 
+#      REVISION:  ---
+#=============================================================================== 
+
+#set -x
+DEBUG=0
+HERE="$(pwd ;)" 
+#COMPREPLY=(compgen -C "ansible-inventory -i ${HOME}/nubeliu-ms-ansible/environments/compliance --list 2>/dev/null | jq '.[] | .hosts? | .[]? ' | sort | uniq;"  2>/dev/nul)
+export PATH="$PATH:/bin:/usr/bin:/usr/local/bin"
+
+usage() {
+	echo "Usage: $(basename $0) [-il] <host-name>"
+	echo "
+		-i <path> : Use environment/hosts file
+		-l 		  : list all available hosts on file
+	"
+	1>&2; exit 1;
+}
+
+export_variables() {
+	export SSH_ARGS=$(ansible-config dump 2>/dev/null | grep '^ANSIBLE_SSH_ARGS' | cut -d'=' -f2-)	
+	export SSH_EXECUTABLE=$(ansible-config dump 2>/dev/null | grep '^ANSIBLE_SSH_EXECUTABLE' | cut -d'=' -f2-)
+	if [[ ! -z $ANSIBLE_ENVIRONMENT_DIR ]]; then
+		export ANSIBLE_ENVIRONMENT_DIR="-i ${ANSIBLE_ENVIRONMENT_DIR}"
+	else
+		export ANSIBLE_ENVIRONMENT_DIR="-i ${HERE}"
+	fi
+}
+
+ansible_ssh() {
+	HOST=$1
+	ANSIBLE_INVENTORY=$(ansible-inventory ${ANSIBLE_ENVIRONMENT_DIR} --host "${HOST}" 2>/dev/null;)
+	if [ $? -ne 0 ]; then
+	    echo "ERROR: ansible inventory failed to gather info on ${HOST}"
+	    exit 1
+	fi
+
+	ANSIBLE_SSH_HOST=$(echo "${ANSIBLE_INVENTORY}" | jq -r "[.ansible_ssh_host?,.ansible_host] | add" | grep -v '^null$')
+	ANSIBLE_USER=$(echo "${ANSIBLE_INVENTORY}" | jq -r "[.ansible_ssh_user,.ansible_user] | add" | grep -v '^null$' )
+	ANSIBLE_PORT=$(echo "${ANSIBLE_INVENTORY}" | jq -r "[.ansible_ssh_port,.ansible_port] | add" | grep -v '^null$' )
+
+	#SSH extras
+	ANSIBLE_SSH_COMMON_ARGS=$(echo "${ANSIBLE_INVENTORY}" | jq ".ansible_ssh_common_args" | grep -v '^null$' | tr -d \")
+	ANSIBLE_SSH_EXTRA_ARGS=$(echo "${ANSIBLE_INVENTORY}" | jq ".ansible_ssh_extra_args" | grep -v '^null$' | tr -d \")
+
+	ANSIBLE_SSH_PRIVATE_KEY_FILE=$(echo "${ANSIBLE_INVENTORY}" | jq -r "[.ansible_private_key_file,.ansible_ssh_private_key_file] | add" | grep -v '^null$' | tr -d \")
+	
+	if [ -n "$ANSIBLE_USER" ]; then ANSIBLE_USER="${ANSIBLE_USER}"; fi
+	if [ -n "$ANSIBLE_PORT" ]; then SSH_ARGS="$SSH_ARGS -p $ANSIBLE_PORT"; fi
+	if [ ! -z "$ANSIBLE_SSH_PRIVATE_KEY_FILE" ]; then ANSIBLE_SSH_PRIVATE_KEY_FILE="-i ${ANSIBLE_SSH_PRIVATE_KEY_FILE}"; fi
+
+	if [[ $DEBUG -eq 1 ]]; then
+		debug
+	fi
+
+	exec ssh ${ANSIBLE_SSH_PRIVATE_KEY_FILE} ${SSH_ARGS} ${ANSIBLE_SSH_COMMON_ARGS} ${ANSIBLE_SSH_EXTRA_ARGS} ${ANSIBLE_USER}@${ANSIBLE_SSH_HOST}
+}
+
+
+debug() {
+	echo "SSH_ARGS: ${SSH_ARGS}"
+	echo "SSH_EXECUTABLE: ${SSH_EXECUTABLE}"
+	echo "ansible_host: ${ANSIBLE_SSH_HOST}"
+	echo "ansible_user: ${ANSIBLE_USER}"
+	echo "ansible_port: ${ANSIBLE_PORT}"
+	echo "ansible_ssh_common_args: ${ANSIBLE_SSH_COMMON_ARGS}"
+	echo "ansible_ssh_extra_args: ${ANSIBLE_SSH_EXTRA_ARGS}"
+	echo "ansible_ssh_private_key_file: ${ANSIBLE_SSH_PRIVATE_KEY_FILE}"
+	echo result command: "ssh ${ANSIBLE_SSH_PRIVATE_KEY_FILE} ${SSH_ARGS} ${ANSIBLE_SSH_COMMON_ARGS} ${ANSIBLE_SSH_EXTRA_ARGS} ${ANSIBLE_USER}@${ANSIBLE_SSH_HOST}"
+}
+
+
+#Script
+while getopts ":li:h:" parameter; do
+    case "${parameter}" in
+        i)
+            ANSIBLE_ENVIRONMENT_DIR="${OPTARG}"
+            ;;
+        l)
+    		export_variables
+    		echo "Avaliable hosts:"
+            ansible-inventory ${ANSIBLE_ENVIRONMENT_DIR} --list 2>/dev/null | jq '.[] | .hosts? | .[]? ' | sort | uniq
+            ;;
+         h) 
+			export_variables
+			
+			HOST="${OPTARG}"
+			ansible_ssh "${HOST}"
+			;;
+        *)
+            usage
+            ;;
+    esac
+done
+_Complete ()   
+{                 
+HOST=$(ansible-inventory -i ${ANSIBLE_ENVIRONMENT_DIR} --list 2>/dev/null | jq '.[] | .hosts? | .[]? ' | sort | uniq | cut -d '"' -f 2;2>/dev/null)
+  local cur
+  
+  COMPREPLY=()   
+  cur=${COMP_WORDS[COMP_CWORD]}
+
+  case "$cur" in
+    *)
+    COMPREPLY=( $( compgen -W '${HOST}') );;
+  esac
+
+  return 0
+}
+
+complete -F _Complete -o filenames ansible-ssh
+
+shift $((OPTIND-1))
