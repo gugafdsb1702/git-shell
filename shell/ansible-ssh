@@ -110,22 +110,25 @@ while getopts ":li:h:" parameter; do
             ;;
     esac
 done
-_Complete ()   
-{                 
-HOST=$(ansible-inventory -i ${ANSIBLE_ENVIRONMENT_DIR} --list 2>/dev/null | jq '.[] | .hosts? | .[]? ' | sort | uniq | cut -d '"' -f 2;2>/dev/null)
-  local cur
-  
-  COMPREPLY=()   
-  cur=${COMP_WORDS[COMP_CWORD]}
+tool () {
+  local cur="${COMP_WORDS[COMP_CWORD]}"
 
-  case "$cur" in
+  local first="walk run skip bike"
+
+  case "${cur}" in
+    *_*_*)
+      local firstsecond=`echo ${cur} | awk -F '_' '{print $1"_"$2}'`
+      local third="${firstsecond}_morning ${firstsecond}_afternoon ${firstsecond}_evening"
+      COMPREPLY=( $(compgen -W "${third}" -- ${cur}) ); return 0;;
+    *_*)
+      local firstcomp=`echo ${cur} | awk -F '_' '{print $1}'`
+      local second="${firstcomp}_home ${firstcomp}_work ${firstcomp}_park"
+      COMPREPLY=( $(compgen -W "${second}" -S "_" -- ${cur}) ); compopt -o nospace; return 0;;
     *)
-    COMPREPLY=( $( compgen -W '${HOST}') );;
+      COMPREPLY=( $(compgen -W "${first}" -S "_" -- ${cur}) ); compopt -o nospace; return 0;;
   esac
-
-  return 0
 }
 
-complete -F _Complete -o filenames ansible-ssh
+complete -F _tool t
 
 shift $((OPTIND-1))
